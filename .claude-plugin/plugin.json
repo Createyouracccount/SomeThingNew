@@ -1,0 +1,9 @@
+{
+  "$schema": "https://anthropic.com/claude-code/plugin.schema.json",
+  "name": "self-tuner",
+  "version": "0.1.0",
+  "description": "세션에서 배운 교훈을 델타 단위로 축적하고(ACE), 반복 요청을 스킬 후보로 유도(AWM)하며, 평가로 검증한 뒤에만 승격하는 개인용 자가 개선 하네스",
+  "author": { "name": "donguk" },
+  "keywords": ["memory", "self-improvement", "skills", "hooks", "ace", "reflection"],
+  "experimental": { "evals": "evals" }
+}
