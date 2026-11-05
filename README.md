@@ -71,7 +71,7 @@ Claude Code 에 이미 있는 것(auto memory, skill-creator, `/insights`, `/doc
 ## 2. 설치
 
 ```bash
-git clone <이 저장소> ~/dev/claude-self-tuner   # 또는 폴더 복사
+git clone https://github.com/Createyouracccount/SomeThingNew.git ~/dev/claude-self-tuner
 ~/dev/claude-self-tuner/install.sh              # → ~/.claude/skills/self-tuner (self-tuner@skills-dir 로 자동 로드)
 ```
 
