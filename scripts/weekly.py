@@ -16,6 +16,7 @@ from common import CANDIDATES, SESSIONS, EPISODES, data_dir, read_jsonl, today
 import lessons
 import enforce
 import curate
+import knowledge
 import json
 
 ARCHIVE_BELOW = 0.3  # 왜 0.3: 반감기 60일 기준, 증거 1개짜리 교훈이 ~100일 동안 한 번도 안 쓰였을 때의 점수
@@ -70,6 +71,11 @@ def report(apply: bool = False) -> str:
     for l in enf_c:
         ev, entry = enforce.build_hook(l)
         out.append(f"- {l['text']} [{l['id']}] → {ev}" + (f" ({entry['matcher']})" if entry.get("matcher") else "") + f"  · `/self-tuner:enforce apply {l['id']}`")
+    out.append("")
+    st = knowledge.stale()
+    out.append(f"## 지식 노트: 총 {len(knowledge.notes())}개, 재검증 필요(90일 경과) {len(st)}개")
+    for n in st[:10]:
+        out.append(f"- {n['title']} (검증기한 {n.get('verify_by')}) · `/self-tuner:research --refresh \"{n['title']}\"`")
     out.append("")
     out.append("## 이번 주 할 일 (권장)")
     out.append("- `/skill-doctor` — 한 번도 안 호출된 스킬 제거")

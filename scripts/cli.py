@@ -20,6 +20,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 from common import CANDIDATES, SESSIONS, data_dir, now_iso, read_jsonl  # noqa: E402
 import curate  # noqa: E402
 import enforce  # noqa: E402
+import knowledge  # noqa: E402
 import lessons  # noqa: E402
 import recommend as recommend_mod  # noqa: E402
 import weekly  # noqa: E402
@@ -161,6 +162,29 @@ def cmd_recommend(a):
     print(recommend_mod.render(recs, Path(a.ecc_dir).expanduser()))
 
 
+def cmd_knowledge(a):
+    if a.sub == "add":
+        body = Path(a.body_file).read_text(encoding="utf-8") if a.body_file else (a.body or "")
+        p = knowledge.add_note(a.title, a.topic or "general", a.summary or "", body,
+                               [u.strip() for u in (a.sources or "").split("|") if u.strip()],
+                               [k.strip() for k in a.keywords.split(",")] if a.keywords else None, a.confidence or "medium")
+        print(f"저장됨: {p}")
+    elif a.sub == "list":
+        ns = knowledge.notes()
+        print(f"노트 {len(ns)}개 · 인덱스: {knowledge.kdir() / 'KNOWLEDGE.md'}")
+        for n in ns:
+            print(f"- {n['title']} ({n.get('fetched_at','?')}, 검증기한 {n.get('verify_by','?')}) — {n['summary'][:90]}")
+    elif a.sub == "stale":
+        for n in knowledge.stale():
+            print(f"- 재검증 필요: {n['title']} (검증기한 {n.get('verify_by')}) {n['path']}")
+        print("(없음)" if not knowledge.stale() else "")
+    elif a.sub == "search":
+        for n in knowledge.relevant(a.query or "", k=5):
+            print(f"- {n['title']} — {n['summary'][:100]}\n  {n['path']}")
+    elif a.sub == "reindex":
+        print("wrote", knowledge.rebuild_index())
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(prog="self-tuner")
     sp = ap.add_subparsers(dest="cmd")
@@ -180,6 +204,13 @@ def main() -> int:
     p.add_argument("id", nargs="?"); p.add_argument("--intent"); p.add_argument("--keyword")
     p.add_argument("--examples"); p.add_argument("--skill"); p.add_argument("--note")
     p.set_defaults(f=cmd_candidate)
+    p = sp.add_parser("knowledge")
+    p.add_argument("sub", choices=["add", "list", "stale", "search", "reindex"])
+    p.add_argument("query", nargs="?")
+    p.add_argument("--title"); p.add_argument("--topic"); p.add_argument("--summary"); p.add_argument("--body")
+    p.add_argument("--body-file"); p.add_argument("--sources", help="URL 들, | 구분"); p.add_argument("--keywords", help="콤마 구분")
+    p.add_argument("--confidence", choices=["low", "medium", "high"])
+    p.set_defaults(f=cmd_knowledge)
     p = sp.add_parser("enforce")
     p.add_argument("sub", choices=["list", "emit", "apply", "remove"])
     p.add_argument("id", nargs="?"); p.add_argument("--event"); p.add_argument("--matcher")
