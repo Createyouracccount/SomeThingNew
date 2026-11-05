@@ -57,6 +57,12 @@ def add_note(title: str, topic: str, summary: str, body: str, sources: list[dict
     if not sources:
         raise SystemExit("출처(sources) 없는 노트는 저장하지 않습니다 — 최소 1개 URL 필요")
     kws = kws or keywords(title + " " + summary, limit=12)
+    # 증거 기준: 독립 출처 2개 미만이면 high 를 허용하지 않는다(논문 1편 = 근거 1개). 호출자가 high 를 줘도 내린다.
+    hosts = {s_["url"].split("/")[2] if "//" in s_["url"] else s_["url"] for s_ in sources}
+    if len(hosts) < 2 and confidence == "high":
+        confidence = "medium"
+    if len(sources) < 2:
+        confidence = "low" if confidence != "medium" else "medium"
     days = VERIFY_DAYS.get(ntype, VERIFY_DAYS["default"]) if ntype in SHORT_LIVED or ntype in VERIFY_DAYS else VERIFY_DAYS["default"]
     verify_by = (datetime.now() + timedelta(days=days)).strftime("%Y-%m-%d")
     path = kdir() / (_slug(title) + ".md")
