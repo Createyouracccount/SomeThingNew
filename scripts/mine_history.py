@@ -23,7 +23,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
-from common import claude_home, keywords  # noqa: E402
+from common import claude_home, correction_hint, keywords  # noqa: E402
 
 
 def iter_user_prompts(jsonl: Path):
@@ -153,10 +153,13 @@ def main() -> int:
     by_project = collections.Counter(p["project"] for p in prompts)
     intents = collections.Counter()
     kw = collections.Counter()
+    hinted = []
     for p in prompts:
         for i in label_intents(p["text"]):
             intents[i] += 1
         kw.update(keywords(p["text"], limit=8))
+        if correction_hint(p["text"]):
+            hinted.append(p)
 
     # --- 스킬 후보: 같은 의도 + 같은 상위 키워드가 여러 세션에 걸쳐 반복되면 후보 ---
     # 왜 '여러 세션'을 조건으로 두나: 한 세션 안에서 반복된 말은 그 작업의 맥락일 뿐,
@@ -186,6 +189,7 @@ def main() -> int:
     out.append(f"- 스캔 디렉터리: `{args.projects_dir}`")
     out.append(f"- 사람 프롬프트 {len(prompts)}개 / 세션 {len(sessions)}개 / 프로젝트 {len(by_project)}개"
                + (f" / 최근 {args.days}일" if args.days else ""))
+    out.append(f"- 교정 힌트가 있는 프롬프트(고정밀·저재현 패턴, 샘플링용): {len(hinted)}개")
     out.append("- (요청 유형·키워드는 규칙 기반 **거친 통계**다. 교훈 추출은 /self-tuner:retro 나 리플렉터가 실제 대화를 읽고 한다)\n")
     out.append("## 프로젝트별 프롬프트 수")
     for k, v in by_project.most_common(15):
@@ -204,6 +208,10 @@ def main() -> int:
         out.append(f"- **{c['intent']} / {c['keyword']}** — {c['count']}회, {c['sessions']}세션")
         for e in c["examples"]:
             out.append(f"  - 예: {e}")
+    if hinted:
+        out.append("\n## 교정 힌트 샘플 (먼저 읽어볼 턴 — 판정이 아니라 후보)")
+        for p in hinted[:15]:
+            out.append(f"- [{p['project']}] {p['text'][:140].replace(chr(10),' ')}")
     if memory:
         out.append("\n## 이미 auto-memory에 기록된 내용 (중복 추출 금지)")
         for proj, items in memory.items():
@@ -216,6 +224,7 @@ def main() -> int:
             "prompts": len(prompts), "sessions": len(sessions),
             "intents": intents.most_common(), "keywords": kw.most_common(50),
             "tools": tools.most_common(), "candidates": candidates[:30],
+            "hinted_samples": [{"project": p["project"], "text": p["text"][:300]} for p in hinted[:60]],
             "memory_projects": list(memory.keys()),
         }, ensure_ascii=False, indent=2), encoding="utf-8")
     return 0

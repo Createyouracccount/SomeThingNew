@@ -16,7 +16,7 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
-from common import EPISODES, SESSIONS, bail_if_child, data_dir, project_key, read_hook_input, read_jsonl, today  # noqa: E402
+from common import EPISODES, SESSIONS, bail_if_child, correction_hint, data_dir, project_key, read_hook_input, read_jsonl, today  # noqa: E402
 
 bail_if_child()
 inp = read_hook_input()
@@ -34,9 +34,18 @@ DAILY_COST_CAP = float(os.environ.get("SELF_TUNER_DAILY_COST_USD", "1.00"))  # �
 all_eps = read_jsonl(data_dir() / EPISODES)
 eps = [e for e in all_eps if e.get("session") == sid and e.get("kind") == "prompt"]
 had_injection = any(e.get("session") == sid and e.get("kind") == "inject" for e in all_eps)
-# 왜 주입이 있으면 예외인가: 주입된 교훈의 효과 판정은 짧은 세션에서도 해야 데이터가 쌓인다
-if len(eps) < MIN_PROMPTS and not had_injection:
-    sys.exit(0)
+had_hint = any(correction_hint(e.get("text", "")) for e in eps)   # 고정밀 힌트: 게이트 전용, 판정 아님
+had_failure = any(e.get("session") == sid and e.get("kind") == "tool_failure" for e in all_eps)
+# 게이트 논리(비용 대비):
+#  - 주입된 교훈이 있으면 길이와 무관하게 실행(효과 판정 데이터가 필요)
+#  - 교정 힌트나 도구 실패가 있으면 프롬프트 2개부터 실행(배울 게 있을 확률이 높다)
+#  - 둘 다 없으면 프롬프트 ≥ MIN_PROMPTS(기본 3)… 그리고 ≥6 이 아니면 건너뛴다(조용한 짧은 세션은 교훈이 거의 없다)
+if not had_injection:
+    if had_hint or had_failure:
+        if len(eps) < 2:
+            sys.exit(0)
+    elif len(eps) < max(MIN_PROMPTS, 6):
+        sys.exit(0)
 
 runs = read_jsonl(data_dir() / SESSIONS)
 mine = [r for r in runs if r.get("session") == sid]
