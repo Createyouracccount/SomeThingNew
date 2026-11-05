@@ -33,7 +33,9 @@ CATEGORY_KO = {
 
 
 def render(k: int = MAX_LINES - 8) -> str:
-    rows = lessons.top(scope_filter={"global"}, k=k)
+    # 훅으로 강제된 교훈은 뷰에서 뺀다. 왜: 같은 규칙이 권고(rules)와 강제(hook) 두 곳에 있으면
+    # 컨텍스트만 늘고, 사용자가 어느 쪽을 고쳐야 하는지 헷갈린다.
+    rows = [l for l in lessons.top(scope_filter={"global"}, k=k + 5) if not l.get("enforced")][:k]
     lines = [HEADER.format(date=today())]
     if not rows:
         lines.append("_(아직 전역 교훈 없음 — 세션이 쌓이면 Stop 훅의 리플렉터가 채웁니다)_")

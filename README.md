@@ -52,6 +52,8 @@ Claude Code 에 이미 있는 것(auto memory, skill-creator, `/insights`, `/doc
              /self-tuner:retro → 이 세션 회고, 교훈을 보고 승인
              /self-tuner:lessons good|bad <id> → 피드백(점수 반영, 자동 보관)
              /self-tuner:promote → 후보를 격리 폴더에 스킬+평가로 만들고 Δ>0 일 때만 ~/.claude/skills/ 로
+             /self-tuner:enforce → 반복 확인된 교훈을 '권고'에서 '강제(훅)'로 승격
+             /self-tuner:weekly  → 주 1회 정리 리포트 (examples/loop.md 를 ~/.claude/loop.md 로 복사하면 /loop 로 자동)
 ```
 
 ### 데이터 (모두 `~/.claude/plugins/data/self-tuner/`, 플러그인 업데이트에도 유지)
@@ -98,6 +100,7 @@ Windows 는 `hooks.json` 의 `python3` 를 `python` 으로 바꾸면 동작할 �
 2. `/self-tuner:lessons` 로 저장된 교훈 확인. 틀린 건 `bad <id>`, 핵심은 `pin <id>`.
 3. 평소처럼 쓴다. 3개 이상 프롬프트가 있는 세션이 끝날 때마다 리플렉터가 한 번 돈다.
 4. 2~3주 뒤 `/self-tuner:promote` 로 후보를 평가·승격. `/skill-doctor` 로 안 쓰는 스킬은 제거.
+5. 매주 `/self-tuner:weekly` (또는 `examples/loop.md` 를 `~/.claude/loop.md` 로 복사해 `/loop`). 리포트의 "훅 강제 후보"는 `/self-tuner:enforce apply <id>` 로 올리면 그 규칙은 모델이 더는 무시할 수 없다.
 
 ---
 
@@ -124,6 +127,9 @@ Windows 는 `hooks.json` 의 `python3` 를 `python` 으로 바꾸면 동작할 �
 | `/self-tuner:retro [session-id]` | 현재 세션 회고(사람 승인형 Reflector) | 사용자 |
 | `/self-tuner:lessons [list\|good\|bad\|pin\|archive\|stats\|curate]` | 교훈 관리·피드백 | — |
 | `/self-tuner:promote [id\|list]` | 후보 → 격리 초안 → `claude plugin eval` Δ>0 → `~/.claude/skills/` | 사용자 + 평가 |
+| `/self-tuner:enforce [list\|apply <id>\|remove <id>]` | 증거 3회 이상·반대표 0인 교훈을 **훅으로 강제**. hookify 있으면 위임, 없으면 `type: prompt` 훅을 settings.json 에(백업 후, 승인 시). 동시 최대 5개 | 사용자 |
+| `/self-tuner:weekly [--apply]` | 주간 리포트: 지난 7일 통계, 오래된 교훈 보관 제안, 훅 강제 후보, 대기 스킬 후보, `/skill-doctor`·`/doctor prompt-audit` 권장 | 보관 적용은 사용자 |
+| `/self-tuner:mine` 내 `recommend` | 로컬 ECC 포크(또는 다른 스킬 모음)에서 사용 기록에 맞는 스킬 5~10개만 추천 + 복사 명령. 통째 설치(설명 ~100KB 상시 로드) 회피 | 복사는 사용자 |
 
 `agents/reflector.md` 는 `memory: user` 를 가진 haiku 서브에이전트로, 큰 세션의 회고를 위임할 때 쓴다
 (자기 메모리에 '기각된 교훈 유형'을 적어 같은 노이즈를 반복 제안하지 않도록).
@@ -170,6 +176,8 @@ SessionStart/UserPromptSubmit/Stop(async) 훅이 모두 실행되고 에피소�
 
 ## 7. 로드맵 (다음 단계 아이디어, 우선순위순)
 
+완료(2026-11-05): 교훈→훅 강제(enforce), 주간 유지보수(weekly), ECC 스킬 추천기(recommend). 계획 문서: `docs/plan-2026-11-05.md`, 조사: `docs/roadmap-recommendations.md`.
+
 1. **Agent 훅으로 '예측 검증'**: Agentic Harness Engineering(2026) 의 "모든 편집은 반증 가능한 예측을 가진다" —
    교훈 추가 시 `prediction` 필드를 받고, 다음 세션 Stop 에서 `type: agent` 훅이 예측이 맞았는지 채점 → helpful/harmful 자동 투표.
 2. **MaTTS 식 대조 신호**: 같은 요청을 서브에이전트 2개가 풀게 하고 차이에서 교훈 추출(ReasoningBank). `/self-tuner:retro --contrast`.
@@ -193,8 +201,12 @@ claude-self-tuner/
 │   ├── on_session_start.py / on_prompt.py / on_tool_fail.py / on_stop.py
 │   ├── reflect.py                  # Reflector+Curator: 다이제스트 → claude -p haiku → 델타 → upsert
 │   ├── mine_history.py             # 과거 transcript/메모리 마이닝 (cold start)
+│   ├── enforce.py                  # 교훈 → prompt 훅 (settings.json 백업 후 추가/제거)
+│   ├── weekly.py                   # 주간 리포트·감쇠 보관 제안
+│   ├── recommend.py                # ECC 등 스킬 모음에서 IDF 가중 키워드로 추천
 │   └── cli.py                      # 스킬이 호출하는 단일 CLI
-├── skills/{mine,retro,lessons,promote}/SKILL.md
+├── skills/{mine,retro,lessons,promote,enforce,weekly}/SKILL.md
+├── examples/loop.md                # 주간 유지보수용 /loop 프롬프트 샘플
 ├── agents/reflector.md             # memory: user 를 가진 haiku 리플렉터
 ├── evals/                          # claude plugin eval 케이스 (플러그인 자기 평가)
 ├── docs/research-academic.md       # 논문 조사

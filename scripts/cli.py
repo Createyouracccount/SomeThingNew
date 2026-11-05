@@ -19,7 +19,10 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent))
 from common import CANDIDATES, SESSIONS, data_dir, now_iso, read_jsonl  # noqa: E402
 import curate  # noqa: E402
+import enforce  # noqa: E402
 import lessons  # noqa: E402
+import recommend as recommend_mod  # noqa: E402
+import weekly  # noqa: E402
 
 
 def _cands() -> list[dict]:
@@ -122,6 +125,42 @@ def cmd_candidate(a):
         print("해당 id 없음")
 
 
+def cmd_enforce(a):
+    if a.sub == "list":
+        c = enforce.candidates()
+        print(f"강제 중 {len(enforce.enforced())}/{enforce.MAX_ENFORCED}, hookify 설치: {'예' if enforce.hookify_installed() else '아니오'}")
+        for l in c[:10]:
+            ev, entry = enforce.build_hook(l)
+            print(f"- {l['id']} [{l['category']}] {l['text']} → {ev}" + (f" ({entry.get('matcher')})" if entry.get('matcher') else "") + f"  evidence={l.get('evidence')}")
+        if not c:
+            print("(후보 없음: evidence ≥ 3, 반대표 0 인 교훈이 아직 없음)")
+        for l in enforce.enforced():
+            print(f"- [강제 중] {l['id']} {l['text']} → {l['enforced'].get('event')}")
+    elif a.sub == "emit":
+        l = next((x for x in lessons.load() if x["id"] == a.id), None)
+        if not l:
+            print("해당 id 없음"); return
+        ev, entry = enforce.build_hook(l, a.event, a.matcher)
+        print(json.dumps({"hooks": {ev: [entry]}}, ensure_ascii=False, indent=2))
+    elif a.sub == "apply":
+        p = enforce.apply(a.id, a.event, a.matcher)
+        curate.write_rules()
+        print(f"적용됨 → {p} (백업 생성). 새 세션부터 동작. 해제: enforce remove {a.id}")
+    elif a.sub == "remove":
+        print("해제됨" if enforce.remove(a.id) else "강제 항목 없음")
+        curate.write_rules()
+
+
+def cmd_weekly(a):
+    print(weekly.report(apply=a.apply))
+
+
+def cmd_recommend(a):
+    recs = recommend_mod.recommend(Path(a.ecc_dir).expanduser(), Path(a.mine).expanduser() if a.mine else None,
+                                   top=a.top, extra_terms=(a.terms or "").split(",") if a.terms else None)
+    print(recommend_mod.render(recs, Path(a.ecc_dir).expanduser()))
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(prog="self-tuner")
     sp = ap.add_subparsers(dest="cmd")
@@ -141,6 +180,16 @@ def main() -> int:
     p.add_argument("id", nargs="?"); p.add_argument("--intent"); p.add_argument("--keyword")
     p.add_argument("--examples"); p.add_argument("--skill"); p.add_argument("--note")
     p.set_defaults(f=cmd_candidate)
+    p = sp.add_parser("enforce")
+    p.add_argument("sub", choices=["list", "emit", "apply", "remove"])
+    p.add_argument("id", nargs="?"); p.add_argument("--event"); p.add_argument("--matcher")
+    p.set_defaults(f=cmd_enforce)
+    p = sp.add_parser("weekly"); p.add_argument("--apply", action="store_true", help="보관 제안을 실제 적용")
+    p.set_defaults(f=cmd_weekly)
+    p = sp.add_parser("recommend")
+    p.add_argument("--ecc-dir", required=True); p.add_argument("--mine", default=str(data_dir() / "mine.json"))
+    p.add_argument("--top", type=int, default=10); p.add_argument("--terms", help="추가 키워드, 콤마 구분")
+    p.set_defaults(f=cmd_recommend)
     a = ap.parse_args()
     if not a.cmd:
         a = ap.parse_args(["list"])
