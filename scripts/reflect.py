@@ -24,7 +24,7 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
-from common import EPISODES, SESSIONS, append_jsonl, data_dir, now_iso, read_jsonl, today  # noqa: E402
+from common import EPISODES, SESSIONS, append_jsonl, correction_hint, data_dir, now_iso, read_jsonl, today  # noqa: E402
 import curate  # noqa: E402
 import lessons  # noqa: E402
 import outcomes  # noqa: E402
@@ -49,9 +49,12 @@ PROMPT = """당신은 코딩 에이전트 하네스의 '리플렉터'입니다. 
 - worked: 사용자가 만족하거나 다른 주제로 넘어갔다 / partial: 일부만 반영됨 / failed: 사용자가 그 교훈과 관련된 내용을 교정했거나 같은 요청을 되풀이했다 / unknown: 판단 근거 없음(기본값).
 - 사용자 턴이 교훈 주제와 무관하면 unknown. 감정 표현만으로 판단하지 마세요.
 
+세 번째 과제 — 교정 턴 식별: 다이제스트의 사용자 프롬프트 중 '이전 응답을 바로잡는 교정' 인 것의 번호(1부터)를 모두 적으세요. 없으면 [].
+
 출력 형식(JSON 객체 하나, 다른 텍스트 금지):
 {"lessons": [{"text": "...", "category": "...", "scope": "global|project", "rationale": "..."}],
- "outcomes": [{"id": "Lxxxxxxxx", "label": "worked|partial|unknown|failed", "why": "10~30자"}]}
+ "outcomes": [{"id": "Lxxxxxxxx", "label": "worked|partial|unknown|failed", "why": "10~30자"}],
+ "correction_turns": [2, 5]}
 
 프로젝트: {project}
 
@@ -73,9 +76,9 @@ def build_digest(session_id: str, transcript_path: str | None, max_chars: int = 
 
     lines = []
     lines.append(f"- 사용자 프롬프트 {len(prompts)}개, 도구 실패 {len(failures)}건")
-    lines.append("\n[사용자 프롬프트 — 시간순] (교정인지, 만족했는지는 당신이 문맥으로 판단하세요)")
-    for e in prompts[:40]:
-        lines.append(f"- {e['text'][:300].replace(chr(10), ' ')}")
+    lines.append("\n[사용자 프롬프트 — 시간순, 번호 포함] (교정인지, 만족했는지는 당신이 문맥으로 판단하세요)")
+    for i, e in enumerate(prompts[:40], 1):
+        lines.append(f"{i}. {e['text'][:300].replace(chr(10), ' ')}")
     if failures:
         lines.append("\n[도구 실패]")
         for e in failures[:15]:
@@ -147,6 +150,7 @@ def parse_output(text: str) -> tuple[list[dict], list[dict]]:
         o = {"lessons": o, "outcomes": []}
     les = [d for d in o.get("lessons", []) if isinstance(d, dict) and isinstance(d.get("text"), str)][:6]  # 6개 넘으면 노이즈
     outs = [d for d in o.get("outcomes", []) if isinstance(d, dict)]
+    parse_output.correction_turns = [int(x) for x in o.get("correction_turns", []) if str(x).isdigit()]
     return les, outs
 
 
@@ -160,6 +164,7 @@ def main() -> int:
     args = ap.parse_args()
 
     digest, stats = build_digest(args.session, args.transcript)
+    session_prompts = [e for e in read_jsonl(data_dir() / EPISODES) if e.get("session") == args.session and e.get("kind") == "prompt"][:40]
     if args.dry_run:
         print(digest)
         return 0
@@ -184,6 +189,14 @@ def main() -> int:
         result["cost_usd"] = round(getattr(call_claude, "last_cost", 0.0), 4)
         deltas, labels = parse_output(raw)
         result["labeled"] = outcomes.apply_llm_labels(args.session, labels) if pend else 0
+        # 힌트 정밀도 자가 측정: 정규식 힌트(게이트용) vs 리플렉터가 문맥으로 판정한 교정 턴.
+        # 왜: "키워드 힌트는 정밀하다" 는 주장을 문헌 한 편으로 단정하지 않고, 내 데이터로 계속 측정한다.
+        # weekly 가 누적 정밀도를 보여주고, 30건 이상 쌓였는데 0.7 미만이면 게이트에서 힌트를 뺀다(on_stop 참조).
+        llm_corr = set(getattr(parse_output, "correction_turns", []))
+        hinted = {i for i, e in enumerate(session_prompts, 1) if correction_hint(e.get("text", ""))}
+        result["hint_tp"] = len(hinted & llm_corr)
+        result["hint_fp"] = len(hinted - llm_corr)
+        result["hint_fn"] = len(llm_corr - hinted)
         for d in deltas:
             scope = "global" if d.get("scope") == "global" else f"project:{args.project}"
             _, how = lessons.upsert(d["text"], d.get("category", "workflow"), scope,

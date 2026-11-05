@@ -57,6 +57,10 @@ def report(apply: bool = False) -> str:
             oc[k_] = oc.get(k_, 0.0) + v_
     out.append(f"- 교훈 효과 판정(리플렉터, 누적): worked {oc['worked']:.1f} / partial {oc['partial']:.1f} / unknown {oc['unknown']:.1f} / failed {oc['failed']:.1f}")
     out.append(f"- 리플렉션 {len(week_runs)}회 → 교훈 추가 {sum(r.get('added',0) for r in week_runs)} / 병합 {sum(r.get('merged',0) for r in week_runs)}, 오류 {sum(1 for r in week_runs if r.get('error'))}회, 비용 ${sum(r.get('cost_usd',0.0) for r in week_runs):.3f}")
+    tp = sum(r.get("hint_tp", 0) for r in runs); fp = sum(r.get("hint_fp", 0) for r in runs); fn = sum(r.get("hint_fn", 0) for r in runs)
+    if tp + fp + fn:
+        prec = tp / max(1, tp + fp); rec = tp / max(1, tp + fn)
+        out.append(f"- 교정 힌트(정규식, 게이트용) 자가 측정: 정밀도 {prec:.2f} / 재현율 {rec:.2f} (n={tp+fp+fn}; 30건↑에서 정밀도<0.7 이면 게이트 자동 제외)")
     provisional = [l for l in active if not lessons.is_confirmed(l) and not l.get("enforced")]
     out.append(f"- 잠정 교훈(한 세션에서만 관찰, rules 미반영) {len(provisional)}개 — 다른 세션에서 다시 나오면 자동 확정")
     if new_lessons:

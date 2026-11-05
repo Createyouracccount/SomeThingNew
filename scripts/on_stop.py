@@ -31,10 +31,14 @@ NEW_PROMPTS_BETWEEN = int(os.environ.get("SELF_TUNER_NEW_PROMPTS", "5"))
 DAILY_CAP = int(os.environ.get("SELF_TUNER_DAILY_CAP", "12"))
 DAILY_COST_CAP = float(os.environ.get("SELF_TUNER_DAILY_COST_USD", "1.00"))  # 왜: 보이지 않는 백그라운드 비용에 상한
 
+runs = read_jsonl(data_dir() / SESSIONS)
 all_eps = read_jsonl(data_dir() / EPISODES)
 eps = [e for e in all_eps if e.get("session") == sid and e.get("kind") == "prompt"]
 had_injection = any(e.get("session") == sid and e.get("kind") == "inject" for e in all_eps)
-had_hint = any(correction_hint(e.get("text", "")) for e in eps)   # 고정밀 힌트: 게이트 전용, 판정 아님
+# 힌트 정밀도(리플렉터 판정 대비)가 30건 이상 쌓였는데 0.7 미만이면 힌트를 게이트에서 뺀다 — 가정이 아니라 측정으로 결정
+tp = sum(r.get("hint_tp", 0) for r in runs); fp = sum(r.get("hint_fp", 0) for r in runs)
+hint_trusted = (tp + fp) < 30 or tp / max(1, tp + fp) >= 0.7
+had_hint = hint_trusted and any(correction_hint(e.get("text", "")) for e in eps)   # 게이트 전용, 판정 아님
 had_failure = any(e.get("session") == sid and e.get("kind") == "tool_failure" for e in all_eps)
 # 게이트 논리(비용 대비):
 #  - 주입된 교훈이 있으면 길이와 무관하게 실행(효과 판정 데이터가 필요)
@@ -47,7 +51,6 @@ if not had_injection:
     elif len(eps) < max(MIN_PROMPTS, 6):
         sys.exit(0)
 
-runs = read_jsonl(data_dir() / SESSIONS)
 mine = [r for r in runs if r.get("session") == sid]
 if mine and len(eps) - mine[-1].get("prompts", 0) < NEW_PROMPTS_BETWEEN:
     sys.exit(0)
