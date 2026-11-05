@@ -75,10 +75,19 @@ git clone https://github.com/Createyouracccount/SomeThingNew.git ~/dev/claude-se
 ~/dev/claude-self-tuner/install.sh              # → ~/.claude/skills/self-tuner (self-tuner@skills-dir 로 자동 로드)
 ```
 
-개발/테스트 중엔 복사 없이:
+### 한 세션에서만 시험하기 (전역 설치 없이)
 ```bash
-claude --plugin-dir ~/dev/claude-self-tuner
+cd <시험할 프로젝트>
+SELF_TUNER_TRIAL=1 claude --plugin-dir ~/dev/claude-self-tuner
 ```
+- `--plugin-dir` 는 **이 세션에만** 플러그인을 로드한다. 다른 터미널의 Claude Code 는 영향을 받지 않는다.
+- `SELF_TUNER_TRIAL=1` 은 교훈 뷰를 `~/.claude/rules/` 에 쓰지 않고 데이터 디렉터리에만 두며, 이 세션에만 주입한다.
+- 흔적은 `~/.claude/plugins/data/self-tuner-inline/` 하나뿐이다. 시험이 끝나면 그 폴더만 지우면 된다.
+- 세션 안에서 확인: `/self-tuner:lessons stats` → 데이터 경로·교훈 수, `/self-tuner:mine` → 과거 기록 리포트.
+- 훅이 실제로 돌았는지 보려면 프롬프트 몇 개 입력 후 다른 터미널에서
+  `cat ~/.claude/plugins/data/self-tuner-inline/episodes.jsonl` (프롬프트마다 한 줄씩 쌓인다).
+- 마음에 들면 `install.sh` 로 전역 설치. 시험 중 쌓인 교훈을 가져가려면
+  `cp ~/.claude/plugins/data/self-tuner-inline/lessons.jsonl ~/.claude/plugins/data/self-tuner/`.
 
 요구사항: Claude Code ≥ 2.1.3xx(`claude plugin eval`, `--plugin-dir`, async 훅), Python 3.9+, macOS/Linux.
 Windows 는 `hooks.json` 의 `python3` 를 `python` 으로 바꾸면 동작할 가능성이 높지만 검증하지 않았다.

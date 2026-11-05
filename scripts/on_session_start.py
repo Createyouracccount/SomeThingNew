@@ -25,6 +25,12 @@ except Exception:
     pass
 
 parts = []
+if curate.is_trial():
+    parts.append("[self-tuner] 시험 모드(SELF_TUNER_TRIAL=1): 교훈은 이 세션에만 주입되고 ~/.claude/rules 에는 쓰지 않습니다.")
+    glob_rows = lessons.top(scope_filter={"global"}, k=20)
+    if glob_rows:
+        parts.append("[self-tuner] 전역 교훈:")
+        parts += [f"- {l['text']} [{l['id']}]" for l in glob_rows]
 proj_rows = lessons.top(scope_filter={f"project:{proj}"}, k=10)
 if proj_rows:
     parts.append(f"[self-tuner] 이 프로젝트({proj})에서 과거에 배운 교훈:")

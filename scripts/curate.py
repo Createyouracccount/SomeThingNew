@@ -10,11 +10,12 @@ rules 파일은 그것의 '뷰'다. LLM은 이 파일을 직접 쓰지 않는다
 """
 from __future__ import annotations
 
+import os
 import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
-from common import RULES_FILE, claude_home, today  # noqa: E402
+from common import RULES_FILE, claude_home, data_dir, today  # noqa: E402
 import lessons  # noqa: E402
 
 MAX_LINES = 40  # 왜 40줄인가: 공식 가이드가 CLAUDE.md류 파일을 200줄 이하로 권고. 교훈은 그중 일부만 차지해야 한다.
@@ -49,8 +50,21 @@ def render(k: int = MAX_LINES - 8) -> str:
     return "\n".join(lines) + "\n"
 
 
+def is_trial() -> bool:
+    """SELF_TUNER_TRIAL=1: 한 세션에서만 시험하는 모드.
+
+    왜 필요한가: ~/.claude/rules/ 는 모든 세션에 로드되므로, 시험 중 생긴 교훈이
+    다른 프로젝트 세션에까지 새어 나간다. 시험 모드에서는 뷰를 데이터 디렉터리에만 쓰고,
+    SessionStart 훅이 그 내용을 이 세션에만 주입한다. 끝나면 데이터 디렉터리만 지우면 흔적이 없다.
+    """
+    return os.environ.get("SELF_TUNER_TRIAL") == "1"
+
+
 def write_rules() -> Path:
-    rules_dir = claude_home() / "rules"
+    if is_trial():
+        rules_dir = data_dir()
+    else:
+        rules_dir = claude_home() / "rules"
     rules_dir.mkdir(parents=True, exist_ok=True)
     out = rules_dir / RULES_FILE
     content = render()

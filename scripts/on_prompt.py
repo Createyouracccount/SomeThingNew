@@ -11,6 +11,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
 from common import EPISODES, append_jsonl, bail_if_child, data_dir, emit, keywords, looks_like_correction, now_iso, project_key, read_hook_input  # noqa: E402
+import curate  # noqa: E402
 import lessons  # noqa: E402
 
 bail_if_child()
@@ -27,7 +28,8 @@ append_jsonl(data_dir() / EPISODES, {
 })
 
 # rules 파일에 이미 실린 전역 상위 교훈은 제외 → 중복 주입 방지
-already = {l["id"] for l in lessons.top(scope_filter={"global"}, k=32)}
+# 시험 모드에선 전역 교훈이 SessionStart 로 이미 주입됐으므로 동일하게 제외한다
+already = {l["id"] for l in lessons.top(scope_filter={"global"}, k=20 if curate.is_trial() else 32)}
 hits = lessons.relevant(prompt, scope_filter={"global", f"project:{proj}"}, k=3, exclude_ids=already)
 if hits:
     ctx = "[self-tuner] 이 요청과 관련 있을 수 있는 과거 교훈:\n" + "\n".join(f"- {l['text']} [{l['id']}]" for l in hits)
