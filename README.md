@@ -40,20 +40,26 @@ Claude Code 에 이미 있는 것(auto memory, skill-creator, `/insights`, `/doc
 
 **의도적으로 사람이 끼는 두 지점**: 스킬 승격과 훅 강제의 최종 승인. 조사한 모든 업계 사례(Cursor 가 자동 Memories 를 제거, Devin 이 Knowledge→Skills 로 통합)와 논문(Misevolution, EvoMal)이 "완전 자동 적용은 퇴행을 낳는다"고 말한다. 이 두 지점은 자동화하지 않는다.
 
-**아직 없는 것**: 교훈이 실제로 도움이 됐는지를 **결과로** 채점하는 자동 신호(지금은 사용자의 good/bad 와 재등장 횟수). 로드맵 4번(예측 검증 훅). 그리고 모델 가중치 자체는 바뀌지 않는다 — 바뀌는 것은 하네스(지시·훅·스킬·지식)다.
+**결과 기반 채점(2026-11-05 추가)**: 교훈이 주입되면 기록되고, 세션 끝 리플렉터가 "그 뒤 사용자 턴" 을 읽어 worked/partial/unknown/failed 를 매긴다(roampal 델타 +0.20/+0.05/−0.05/−0.30). 테스트 통과는 결정론 신호로 worked. 리플렉터가 한 세션에서만 본 교훈은 **잠정** — 다른 세션에서 다시 나올 때까지 rules 뷰에 올리지 않는다(2026-10 실험: 자동 회고 제안 125개 중 효과 2개).
+
+**의도적으로 안 하는 것**: 정규식/키워드로 "교정이다", "이 교훈이 관련 있다" 를 판단하지 않는다. 초기 버전에 있었지만 문맥을 모르는 토큰 겹침은 오탐이 많아 제거했다. 판단은 전부 세션 끝 리플렉터(LLM, 비동기, 세션당 1회, 일일 $1 상한)가 실제 대화를 읽고 한다. 훅은 기록과 '막혔을 때' 주입만 한다.
+
+**아직 없는 것**: AHE 식 예측(prediction) 필드와 예측 정밀도 지표, 교훈 제거 control-arm 평가. 그리고 모델 가중치 자체는 바뀌지 않는다 — 바뀌는 것은 하네스(지시·훅·스킬·지식)다.
 
 ## 1. 동작 개요
 
 ```
                     ┌──────────── 세션 중 (LLM 호출 0회, 전부 순수 파이썬) ────────────┐
   SessionStart ──►  on_session_start.py  : 프로젝트 교훈 ≤10줄 + 대기 중 스킬 후보 알림 주입
-  UserPromptSubmit► on_prompt.py         : 프롬프트 기록(교정 여부 플래그) + 관련 교훈 ≤3줄 검색 주입
-  PostToolUseFailure► on_tool_fail.py    : 도구 실패 기록 (Reflexion: 실패는 1급 메모리)
+  UserPromptSubmit► on_prompt.py         : 프롬프트 기록만 (판단·주입 없음)
+  PostToolUse(Bash)► on_tool_use.py      : 테스트 명령 통과 → 직전 주입 교훈 worked
+  PostToolUseFailure► on_tool_fail.py    : 실패 기록; 같은 실패 2회↑ 면 루프 경고 + 이 범위의 pitfall/tool 교훈 ≤5 주입(struggle-gated)
   Stop (async) ──►  on_stop.py           : 게이트 통과 시 reflect.py 를 분리 프로세스로 띄움
                     └────────────────────────────────────────────────────────────────┘
                                    │
                                    ▼  (세션당 ≤1회, haiku, 사용자를 막지 않음)
-                    reflect.py  ── Reflector ──► JSON 델타 [{text, category, scope, rationale}]
+                    reflect.py  ── Reflector ──► {lessons:[{text,category,scope,rationale}], outcomes:[{id,label,why}]}
+                                                  (교훈 추출 + 주입된 교훈의 효과 판정을 한 번의 호출로)
                                 ── Curator  ──► lessons.upsert(): 중복이면 evidence+1·문장 정제, 아니면 추가
                                               ► curate.write_rules(): ~/.claude/rules/self-tuner.md 재생성(뷰)
                                    │
@@ -121,9 +127,9 @@ Windows 는 `hooks.json` 의 `python3` 를 `python` 으로 바꾸면 동작할 �
 
 ## 3. 비용과 안전장치
 
-- **세션 중 LLM 호출 0회.** 훅은 전부 파이썬 정규식/키워드 매칭(UserPromptSubmit 30초 제한 안에서 ~50ms).
-- **리플렉터**: 세션당 최대 1회 + 새 프롬프트 5개마다 1회, haiku, 다이제스트 ≤9k자, 일일 상한 12회
-  (`SELF_TUNER_DAILY_CAP`, `SELF_TUNER_MIN_PROMPTS`, `SELF_TUNER_NEW_PROMPTS`, `SELF_TUNER_MODEL` 로 조정).
+- **세션 중 LLM 호출 0회.** 훅은 기록과 조건부 주입만(수 ms). 정규식/키워드로 의미 판단을 하지 않는다.
+- **리플렉터**: 세션당 최대 1회 + 새 프롬프트 5개마다 1회, haiku, 다이제스트 ≤9k자, 일일 상한 12회·**$1**
+  (`SELF_TUNER_DAILY_CAP`, `SELF_TUNER_DAILY_COST_USD`, `SELF_TUNER_MIN_PROMPTS`, `SELF_TUNER_NEW_PROMPTS`, `SELF_TUNER_MODEL`). 호출당 비용은 sessions.jsonl 에 기록되고 weekly 에 합산된다(claude-mem 의 $580 사고 교훈).
 - **재귀 방지**: 자식 `claude -p` 에 `SELF_TUNER_CHILD=1` 을 넘기고 모든 훅은 이 값이 있으면 즉시 종료.
   자식은 `CLAUDE_CODE_DISABLE_AUTO_MEMORY=1` 로 auto-memory 를 건드리지 않고, 도구는 전부 비허용.
 - **메모리 오염 방지**: LLM 은 lessons.jsonl 을 직접 쓰지 않는다. 쓰기 시 조정(중복 병합), 해악 3표 자동 보관,
@@ -214,7 +220,8 @@ claude-self-tuner/
 │   ├── common.py                   # 경로·JSONL·재진입 가드·교정 정규식·키워드
 │   ├── lessons.py                  # 교훈 저장소: upsert(쓰기 시 조정)·vote·score(감쇠)·relevant(검색)
 │   ├── curate.py                   # lessons → ~/.claude/rules/self-tuner.md (뷰)
-│   ├── on_session_start.py / on_prompt.py / on_tool_fail.py / on_stop.py
+│   ├── on_session_start.py / on_prompt.py / on_tool_use.py / on_tool_fail.py / on_stop.py
+│   ├── outcomes.py                 # 주입 기록 → 리플렉터 라벨/테스트 통과로 worked·failed 집계
 │   ├── reflect.py                  # Reflector+Curator: 다이제스트 → claude -p haiku → 델타 → upsert
 │   ├── mine_history.py             # 과거 transcript/메모리 마이닝 (cold start)
 │   ├── enforce.py                  # 교훈 → prompt 훅 (settings.json 백업 후 추가/제거)
@@ -228,6 +235,7 @@ claude-self-tuner/
 ├── evals/                          # claude plugin eval 케이스 (플러그인 자기 평가)
 ├── docs/research-academic.md       # 논문 조사
 ├── docs/research-industry.md       # 업계·커뮤니티 조사
+├── docs/research-2026-11-*.md      # 결과 기반 피드백 루프 / 최근 3개월 스캔 / 지식 흡수 패턴 조사
 ├── install.sh / LICENSE
 ```
 

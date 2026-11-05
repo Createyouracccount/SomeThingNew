@@ -45,10 +45,11 @@ def cmd_list(_a):
     now = time.time()
     active = [l for l in rows if l.get("status", "active") == "active"]
     active.sort(key=lambda l: lessons.score(l, now), reverse=True)
-    print(f"| id | 점수 | 범주 | 범위 | 증거/👍/👎 | 교훈 |\n|---|---|---|---|---|---|")
+    print(f"| id | 점수 | 범주 | 범위 | 증거/👍/👎 | 세션수 | 상태 | 교훈 |\n|---|---|---|---|---|---|---|---|")
     for l in active:
+        state = "강제" if l.get("enforced") else ("확정" if lessons.is_confirmed(l) else "잠정")
         print(f"| {l['id']} | {lessons.score(l, now):.1f} | {l['category']} | {l['scope']} | "
-              f"{l.get('evidence',1)}/{l.get('helpful',0)}/{l.get('harmful',0)} | {l['text']} |")
+              f"{l.get('evidence',1)}/{l.get('helpful',0)}/{l.get('harmful',0)} | {lessons.distinct_sessions(l)} | {state} | {l['text']} |")
     arch = [l for l in rows if l.get("status") == "archived"]
     print(f"\n활성 {len(active)}개, 보관 {len(arch)}개. rules 뷰: {curate.claude_home() / 'rules' / curate.RULES_FILE}")
 
@@ -66,7 +67,7 @@ def cmd_status(a, status: str):
 
 
 def cmd_add(a):
-    lid, how = lessons.upsert(a.text, a.category, a.scope, a.source or "manual", a.rationale or "")
+    lid, how = lessons.upsert(a.text, a.category, a.scope, a.source or "manual", a.rationale or "", origin="manual")
     print(json.dumps({"id": lid, "result": how}, ensure_ascii=False))
     curate.write_rules()
 
@@ -165,22 +166,42 @@ def cmd_recommend(a):
 def cmd_knowledge(a):
     if a.sub == "add":
         body = Path(a.body_file).read_text(encoding="utf-8") if a.body_file else (a.body or "")
-        p = knowledge.add_note(a.title, a.topic or "general", a.summary or "", body,
-                               [u.strip() for u in (a.sources or "").split("|") if u.strip()],
-                               [k.strip() for k in a.keywords.split(",")] if a.keywords else None, a.confidence or "medium")
-        print(f"저장됨: {p}")
+        # sources: JSON 파일([{url,quote,published_at}]) 이 우선, 없으면 --sources "u1|u2"
+        if a.sources_file:
+            sources = json.loads(Path(a.sources_file).read_text(encoding="utf-8"))
+        else:
+            sources = [{"url": u.strip()} for u in (a.sources or "").split("|") if u.strip()]
+        dup = [s_["url"] for s_ in sources if s_["url"] in knowledge.seen_urls()]
+        if dup and not a.allow_dup:
+            print("이미 다른 노트에 적재된 URL (중복 가능성): " + ", ".join(dup) + "  → 확인 후 --allow-dup 으로 재시도")
+            return
+        p = knowledge.add_note(a.title, a.topic or "general", a.summary or "", body, sources,
+                               [k.strip() for k in a.keywords.split(",")] if a.keywords else None,
+                               a.confidence or "medium", a.type or "finding", a.lang or "ko")
+        print(f"저장됨(미검증): {p}\n→ 검증: knowledge verify \"{p}\"")
+    elif a.sub == "verify":
+        targets = [Path(a.query)] if a.query else [Path(n["path"]) for n in knowledge.notes() if n.get("status") == "unverified"]
+        for t in targets:
+            r = knowledge.verify(t)
+            print(json.dumps(r, ensure_ascii=False))
+        if not targets:
+            print("검증할 미검증 노트 없음")
     elif a.sub == "list":
         ns = knowledge.notes()
         print(f"노트 {len(ns)}개 · 인덱스: {knowledge.kdir() / 'KNOWLEDGE.md'}")
         for n in ns:
-            print(f"- {n['title']} ({n.get('fetched_at','?')}, 검증기한 {n.get('verify_by','?')}) — {n['summary'][:90]}")
+            print(f"- [{n.get('status','?')}/{n.get('confidence','?')}] {n['title']} ({n.get('fetched_at','?')}→{n.get('verify_by','?')}) — {n['summary'][:80]}")
     elif a.sub == "stale":
-        for n in knowledge.stale():
+        st = knowledge.stale()
+        for n in st:
             print(f"- 재검증 필요: {n['title']} (검증기한 {n.get('verify_by')}) {n['path']}")
-        print("(없음)" if not knowledge.stale() else "")
+        if not st:
+            print("(없음)")
     elif a.sub == "search":
-        for n in knowledge.relevant(a.query or "", k=5):
-            print(f"- {n['title']} — {n['summary'][:100]}\n  {n['path']}")
+        for n in knowledge.relevant(a.query or "", k=5, include_unverified=True):
+            print(f"- [{n.get('status')}] {n['title']} — {n['summary'][:100]}\n  {n['path']}")
+    elif a.sub == "status":
+        knowledge.set_status(Path(a.query), a.set); print("ok")
     elif a.sub == "reindex":
         print("wrote", knowledge.rebuild_index())
 
@@ -205,11 +226,14 @@ def main() -> int:
     p.add_argument("--examples"); p.add_argument("--skill"); p.add_argument("--note")
     p.set_defaults(f=cmd_candidate)
     p = sp.add_parser("knowledge")
-    p.add_argument("sub", choices=["add", "list", "stale", "search", "reindex"])
+    p.add_argument("sub", choices=["add", "verify", "list", "stale", "search", "status", "reindex"])
     p.add_argument("query", nargs="?")
     p.add_argument("--title"); p.add_argument("--topic"); p.add_argument("--summary"); p.add_argument("--body")
-    p.add_argument("--body-file"); p.add_argument("--sources", help="URL 들, | 구분"); p.add_argument("--keywords", help="콤마 구분")
-    p.add_argument("--confidence", choices=["low", "medium", "high"])
+    p.add_argument("--body-file"); p.add_argument("--sources", help="URL 들, | 구분")
+    p.add_argument("--sources-file", help="JSON [{url, quote, published_at}]"); p.add_argument("--keywords", help="콤마 구분")
+    p.add_argument("--confidence", choices=["low", "medium", "high"]); p.add_argument("--type", help="finding|tool|api-change|pricing|howto|opinion")
+    p.add_argument("--lang"); p.add_argument("--allow-dup", action="store_true")
+    p.add_argument("--set", help="status 값 (verified|unverified|contradicted|superseded)")
     p.set_defaults(f=cmd_knowledge)
     p = sp.add_parser("enforce")
     p.add_argument("sub", choices=["list", "emit", "apply", "remove"])

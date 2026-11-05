@@ -35,7 +35,10 @@ CATEGORY_KO = {
 def render(k: int = MAX_LINES - 8) -> str:
     # 훅으로 강제된 교훈은 뷰에서 뺀다. 왜: 같은 규칙이 권고(rules)와 강제(hook) 두 곳에 있으면
     # 컨텍스트만 늘고, 사용자가 어느 쪽을 고쳐야 하는지 헷갈린다.
-    rows = [l for l in lessons.top(scope_filter={"global"}, k=k + 5) if not l.get("enforced")][:k]
+    # 리플렉터가 한 세션에서만 본 교훈은 '잠정' — 뷰에 올리지 않고 키워드 매칭 때만 주입된다.
+    # 왜: 자동 회고 제안의 대부분은 노이즈라는 2026 실험 결과(125개 중 2개 효과). 두 번째 세션에서 다시 나오면 승격.
+    rows = [l for l in lessons.top(scope_filter={"global"}, k=k + 20)
+            if not l.get("enforced") and lessons.is_confirmed(l)][:k]
     lines = [HEADER.format(date=today())]
     if not rows:
         lines.append("_(아직 전역 교훈 없음 — 세션이 쌓이면 Stop 훅의 리플렉터가 채웁니다)_")

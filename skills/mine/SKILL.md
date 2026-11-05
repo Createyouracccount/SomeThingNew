@@ -11,7 +11,7 @@ allowed-tools: Bash(python3 ${CLAUDE_PLUGIN_ROOT}/scripts/*)
    ```
    python3 "${CLAUDE_PLUGIN_ROOT}/scripts/mine_history.py" $ARGUMENTS --json "$HOME/.claude/plugins/data/self-tuner/mine.json"
    ```
-2. 리포트의 **교정 프롬프트 샘플** 을 읽고, 반복되는 교정에서 교훈 후보를 뽑아 사용자에게 보여준다(저장은 승인 후 `cli.py add`).
+2. 리포트는 규칙 기반 거친 통계다. 교훈 후보는 **transcript 를 직접 읽고**(`~/.claude/projects/<proj>/*.jsonl` 에서 사용자 턴 몇 개를 Read) 사용자에게 보여준다. 저장은 승인 후 `cli.py add`.
 3. **스킬 후보** 섹션의 각 항목에 대해:
    - 왜 스킬이 될 만한지(여러 세션에서 반복, 절차가 정형화 가능) 한 줄로 판단.
    - 스킬이 될 만하면 `python3 "${CLAUDE_PLUGIN_ROOT}/scripts/cli.py" candidate add --intent "<intent>" --keyword "<kw>" --examples "<예시1>|<예시2>"` 로 후보 큐에 넣는다(status=pending).

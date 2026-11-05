@@ -35,7 +35,6 @@ def report(apply: bool = False) -> str:
     week_runs = [r for r in runs if str(r.get("t", "")) >= cutoff]
     week_eps = [e for e in eps if str(e.get("t", "")) >= cutoff]
     week_prompts = [e for e in week_eps if e.get("kind") == "prompt"]
-    week_corr = [e for e in week_prompts if e.get("correction")]
     week_fail = [e for e in week_eps if e.get("kind") == "tool_failure"]
     active = [l for l in rows if l.get("status", "active") == "active"]
     new_lessons = [l for l in active if l.get("created", "") >= cutoff]
@@ -51,8 +50,15 @@ def report(apply: bool = False) -> str:
 
     out = [f"# self-tuner 주간 리포트 ({today()})", ""]
     out.append("## 지난 7일")
-    out.append(f"- 세션 프롬프트 {len(week_prompts)}개 (교정 {len(week_corr)}개, {len(week_corr)/len(week_prompts)*100 if week_prompts else 0:.0f}%), 도구 실패 {len(week_fail)}건")
-    out.append(f"- 리플렉션 {len(week_runs)}회 → 교훈 추가 {sum(r.get('added',0) for r in week_runs)} / 병합 {sum(r.get('merged',0) for r in week_runs)}, 오류 {sum(1 for r in week_runs if r.get('error'))}회")
+    out.append(f"- 세션 프롬프트 {len(week_prompts)}개, 도구 실패 {len(week_fail)}건")
+    oc = {"worked": 0.0, "partial": 0.0, "unknown": 0.0, "failed": 0.0}
+    for l in active:
+        for k_, v_ in (l.get("outcomes") or {}).items():
+            oc[k_] = oc.get(k_, 0.0) + v_
+    out.append(f"- 교훈 효과 판정(리플렉터, 누적): worked {oc['worked']:.1f} / partial {oc['partial']:.1f} / unknown {oc['unknown']:.1f} / failed {oc['failed']:.1f}")
+    out.append(f"- 리플렉션 {len(week_runs)}회 → 교훈 추가 {sum(r.get('added',0) for r in week_runs)} / 병합 {sum(r.get('merged',0) for r in week_runs)}, 오류 {sum(1 for r in week_runs if r.get('error'))}회, 비용 ${sum(r.get('cost_usd',0.0) for r in week_runs):.3f}")
+    provisional = [l for l in active if not lessons.is_confirmed(l) and not l.get("enforced")]
+    out.append(f"- 잠정 교훈(한 세션에서만 관찰, rules 미반영) {len(provisional)}개 — 다른 세션에서 다시 나오면 자동 확정")
     if new_lessons:
         out.append("- 이번 주 새 교훈:")
         out += [f"  - {l['text']} [{l['id']}] ({l['scope']})" for l in new_lessons[:10]]

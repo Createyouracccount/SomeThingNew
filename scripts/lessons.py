@@ -17,7 +17,7 @@ import math
 import time
 from pathlib import Path
 
-from common import LESSONS, data_dir, keywords, now_iso, read_jsonl, write_jsonl
+from common import LESSONS, data_dir, keywords, now_iso, read_jsonl, sanitize, write_jsonl
 
 VALID_CATEGORIES = {"preference", "workflow", "pitfall", "tool", "project", "domain"}
 
@@ -44,6 +44,9 @@ def score(l: dict, now: float | None = None) -> float:
     # 왜 반감기 60일인가: 개인 선호는 느리게 변하므로 분 단위 감쇠는 과하고, 영구 유지는 stale을 만든다.
     decay = math.pow(0.5, age_days / 60.0)
     base = l.get("evidence", 1) + l.get("helpful", 0) - 2 * l.get("harmful", 0)
+    # 결과 기반 보너스(outcomes.py): 주입 뒤 사용자가 넘어갔거나 테스트가 통과하면 +, 교정·재요청·테스트 실패면 −
+    oc = l.get("outcomes") or {}
+    base += 0.20 * oc.get("worked", 0) + 0.05 * oc.get("partial", 0) - 0.05 * oc.get("unknown", 0) - 0.30 * oc.get("failed", 0)
     pinned = 100 if l.get("pinned") else 0
     return pinned + base * decay
 
@@ -57,9 +60,20 @@ def _overlap(a: list[str], b: list[str]) -> float:
     return len(sa & sb) / min(len(sa), len(sb))
 
 
-def upsert(text: str, category: str, scope: str, source: str, rationale: str = "") -> tuple[str, str]:
+def distinct_sessions(l: dict) -> int:
+    """서로 다른 세션에서 몇 번 관찰됐나. 왜: 한 세션 안의 반복은 그 작업의 맥락일 뿐이고,
+    '다른 날 다른 작업에서 다시 나온' 교훈만 믿을 만하다(reSolve 의 '독립 재현', Treude&Baltes 의 회고 노이즈 결과)."""
+    return len({s for s in l.get("sources", []) if s and s != "manual"}) + (1 if "manual" in l.get("sources", []) else 0)
+
+
+def is_confirmed(l: dict) -> bool:
+    """rules 뷰(항상 로드)에 실릴 자격: 사람이 직접 넣었거나(pinned/manual), 2개 이상 세션에서 독립 관찰."""
+    return bool(l.get("pinned")) or l.get("origin") == "manual" or distinct_sessions(l) >= 2
+
+
+def upsert(text: str, category: str, scope: str, source: str, rationale: str = "", origin: str = "reflector") -> tuple[str, str]:
     """교훈을 추가하거나 기존 항목에 합친다. 반환: (id, 'added'|'merged')."""
-    text = text.strip().rstrip(".").strip()
+    text = sanitize(text.strip().rstrip(".").strip(), limit=200)
     if len(text) < 8:
         return ("", "skipped")
     if category not in VALID_CATEGORIES:
@@ -83,7 +97,7 @@ def upsert(text: str, category: str, scope: str, source: str, rationale: str = "
             return (l["id"], "merged")
     rows.append({
         "id": _id(text), "text": text, "category": category, "scope": scope,
-        "keywords": kws, "rationale": rationale[:300],
+        "keywords": kws, "rationale": sanitize(rationale, 300), "origin": origin,
         "evidence": 1, "helpful": 0, "harmful": 0, "status": "active",
         "created": now_iso(), "last_seen": now_iso(), "sources": [source],
     })
@@ -126,21 +140,3 @@ def top(scope_filter: set[str] | None = None, k: int = 20, min_score: float = 0.
     rows = [l for l in rows if score(l, now) >= min_score]
     rows.sort(key=lambda l: score(l, now), reverse=True)
     return rows[:k]
-
-
-def relevant(text: str, scope_filter: set[str], k: int = 3, exclude_ids: set[str] = frozenset()) -> list[dict]:
-    """프롬프트와 키워드가 겹치는 교훈을 고른다(Generative Agents의 relevance×importance)."""
-    kws = set(keywords(text, limit=12))
-    if not kws:
-        return []
-    now = time.time()
-    scored = []
-    for l in load():
-        if l.get("status", "active") != "active" or l.get("scope") not in scope_filter or l["id"] in exclude_ids:
-            continue
-        ov = len(kws & set(l.get("keywords", [])))
-        if ov == 0:
-            continue
-        scored.append((ov * (1 + score(l, now)), l))
-    scored.sort(key=lambda x: x[0], reverse=True)
-    return [l for _, l in scored[:k]]

@@ -118,26 +118,12 @@ def project_key(cwd: str | None) -> str:
 
 
 # ---------------------------------------------------------------------------
-# 교정(correction) 신호 탐지
+# (제거됨) 정규식 교정 탐지
 # ---------------------------------------------------------------------------
-# 왜 정규식인가: UserPromptSubmit 훅은 30초 제한이고 모든 프롬프트마다 돈다.
-# LLM 호출 없이 0ms로 '이 프롬프트는 교정일 확률이 높다'만 표시해 두고,
-# 실제 교훈 추출은 세션 끝에 리플렉터(LLM)가 한 번만 한다.
-CORRECTION_PATTERNS = [
-    r"^(아니|아냐|아니야|아니지|그게 아니|그거 말고|그렇게 말고)",
-    r"(틀렸|잘못|오류야|버그야|안 ?돼|안 ?됨|실패했)",
-    r"(다시 ?해|다시 ?짜|다시 ?작성|고쳐|수정해|되돌려|롤백)",
-    r"(하지 ?마|하지마|말고(?!도)|제외하고|빼고|그만)",
-    r"(왜 ?이렇게|왜 ?그렇게|이게 ?아니라|내 말은)",
-    r"(always|never|don'?t|stop doing|instead|not what i|wrong|incorrect|revert)",
-]
-_CORR = [re.compile(p, re.IGNORECASE) for p in CORRECTION_PATTERNS]
-
-
-def looks_like_correction(text: str) -> bool:
-    head = text.strip()[:200]
-    return any(r.search(head) for r in _CORR)
-
+# 이전 버전은 "아니/말고/다시" 같은 정규식으로 교정을 표시했다. 제거한 이유:
+# - 문맥을 모른다("이거 말고도", "다시 말해줘" 는 교정이 아니다) → 오탐이 많다.
+# - 조사 결과(2026): 키워드 기반 불만 탐지는 재현율 ~1%, LLM 판정은 정밀도 100%/재현율 69%.
+# 교정 여부와 교훈 효과 판정은 세션 끝에 리플렉터(LLM, 비동기)가 실제 대화를 읽고 내린다. 훅은 기록만 한다.
 
 # ---------------------------------------------------------------------------
 # 간단 토크나이저 / 키워드 (교훈 검색용)
@@ -156,8 +142,9 @@ https http github.com www com
 def keywords(text: str, limit: int = 12) -> list[str]:
     """한국어/영어 혼용 텍스트에서 거친 키워드를 뽑는다.
 
-    왜 형태소 분석기를 안 쓰나: 훅은 어떤 머신에서도 추가 설치 없이 돌아야 한다.
-    조사 몇 개만 떼어내도 '교훈 ↔ 프롬프트' 매칭에는 충분하다.
+    용도는 두 가지로 **제한**한다: (1) mine_history 의 빈도 통계, (2) 같은 교훈이 두 번 저장되는 것을 막는 병합 휴리스틱.
+    교훈 주입이나 효과 판정 같은 '의미 판단' 에는 쓰지 않는다 — 문맥을 모르는 토큰 겹침은 오탐이 많다.
+    형태소 분석기를 안 쓰는 이유: 훅은 추가 설치 없이 어떤 머신에서도 돌아야 한다.
     """
     toks = re.findall(r"[A-Za-z][A-Za-z0-9_\-\.]{1,}|[가-힣]{2,}", text)
     out: list[str] = []
@@ -183,3 +170,20 @@ def now_iso() -> str:
 
 def today() -> str:
     return time.strftime("%Y-%m-%d", time.localtime())
+
+
+# ---------------------------------------------------------------------------
+# 자기 기록 파일 위생
+# ---------------------------------------------------------------------------
+_INVISIBLE = re.compile(r"[\u200b-\u200f\u2028-\u202e\u2060-\u206f\ufeff]")
+_TAGISH = re.compile(r"</?\s*(system-reminder|system|assistant|user|tool_result|function_calls|invoke|antml[^>]*)\s*>", re.I)
+
+
+def sanitize(text: str, limit: int = 400) -> str:
+    """교훈/노트에 쓰기 전 정리. 왜: 리플렉터(LLM) 가 쓴 텍스트가 다음 세션의 컨텍스트에 들어간다.
+    보이지 않는 문자나 시스템 태그 흉내가 섞이면 프롬프트 인젝션 통로가 된다
+    (Claude Code v2.1.284 가 MEMORY.md 에 같은 중화를 적용; EvoMal·SkillMisevo 논문의 경고)."""
+    t = _INVISIBLE.sub("", text)
+    t = _TAGISH.sub(lambda m: m.group(0).replace("<", "<\\"), t)
+    t = re.sub(r"[ \t]+", " ", t).strip()
+    return t[:limit]

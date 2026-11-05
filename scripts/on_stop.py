@@ -29,16 +29,21 @@ if not sid:
 MIN_PROMPTS = int(os.environ.get("SELF_TUNER_MIN_PROMPTS", "3"))
 NEW_PROMPTS_BETWEEN = int(os.environ.get("SELF_TUNER_NEW_PROMPTS", "5"))
 DAILY_CAP = int(os.environ.get("SELF_TUNER_DAILY_CAP", "12"))
+DAILY_COST_CAP = float(os.environ.get("SELF_TUNER_DAILY_COST_USD", "1.00"))  # 왜: 보이지 않는 백그라운드 비용에 상한
 
-eps = [e for e in read_jsonl(data_dir() / EPISODES) if e.get("session") == sid and e.get("kind") == "prompt"]
-if len(eps) < MIN_PROMPTS:
+all_eps = read_jsonl(data_dir() / EPISODES)
+eps = [e for e in all_eps if e.get("session") == sid and e.get("kind") == "prompt"]
+had_injection = any(e.get("session") == sid and e.get("kind") == "inject" for e in all_eps)
+# 왜 주입이 있으면 예외인가: 주입된 교훈의 효과 판정은 짧은 세션에서도 해야 데이터가 쌓인다
+if len(eps) < MIN_PROMPTS and not had_injection:
     sys.exit(0)
 
 runs = read_jsonl(data_dir() / SESSIONS)
 mine = [r for r in runs if r.get("session") == sid]
 if mine and len(eps) - mine[-1].get("prompts", 0) < NEW_PROMPTS_BETWEEN:
     sys.exit(0)
-if sum(1 for r in runs if str(r.get("t", "")).startswith(today())) >= DAILY_CAP:
+today_runs = [r for r in runs if str(r.get("t", "")).startswith(today())]
+if len(today_runs) >= DAILY_CAP or sum(r.get("cost_usd", 0.0) for r in today_runs) >= DAILY_COST_CAP:
     sys.exit(0)
 
 # 분리(detached) 실행: Stop 훅 프로세스가 끝나도 리플렉터는 계속 돈다.

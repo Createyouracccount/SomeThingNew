@@ -13,6 +13,8 @@ sys.path.insert(0, str(Path(__file__).parent))
 from common import CANDIDATES, bail_if_child, data_dir, emit, project_key, read_hook_input  # noqa: E402
 import lessons  # noqa: E402
 import curate  # noqa: E402
+import outcomes  # noqa: E402
+import knowledge  # noqa: E402
 
 bail_if_child()
 inp = read_hook_input()
@@ -35,6 +37,13 @@ proj_rows = lessons.top(scope_filter={f"project:{proj}"}, k=10)
 if proj_rows:
     parts.append(f"[self-tuner] 이 프로젝트({proj})에서 과거에 배운 교훈:")
     parts += [f"- {l['text']} [{l['id']}]" for l in proj_rows]
+    outcomes.log_injection(inp.get("session_id"), [l["id"] for l in proj_rows], "session_start")
+
+# 지식 노트는 인덱스 경로만 알린다(auto-memory 와 같은 방식). 왜: 프롬프트마다 키워드로 끼워넣으면 오탐과 잡음.
+# 인덱스 한 줄만 보고 필요할 때 Claude 가 Read 로 연다.
+kn = [n for n in knowledge.notes() if n.get("status") == "verified" or n.get("confidence") == "high"]
+if kn:
+    parts.append(f"[self-tuner] 지식 노트 {len(kn)}개(검증됨) — 인덱스: {knowledge.kdir() / 'KNOWLEDGE.md'} (주제가 겹치면 Read 로 열어 참고)")
 
 cand_path = data_dir() / CANDIDATES
 if cand_path.exists():
